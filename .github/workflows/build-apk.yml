@@ -1,120 +1,83 @@
-name: Build Android APK (Z1 Movies)
+name: Build Android APK (Z1 MOVIES)
 
 on:
   push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  build-android:
-    name: Build Z1 Movies Debug APK
+  build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+    - name: Set up Node.js 22.x
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
 
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+    - name: Set up Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+    - name: Accept Android SDK Licenses & Install Tools
+      run: |
+        yes | sdkmanager --licenses || true
+        sdkmanager "platforms;android-36" "platforms;android-35" "build-tools;36.0.0" "build-tools;35.0.0" || true
 
-      - name: Install Android SDK Platform and Build Tools
-        run: |
-          echo "Accepting Android SDK licenses..."
-          yes | sdkmanager --licenses || true
-          echo "Installing required Android platforms and build tools..."
-          sdkmanager "platforms;android-36" "platforms;android-35" "build-tools;36.0.0" "build-tools;35.0.0" "cmdline-tools;latest" || true
+    - name: Install Dependencies
+      run: npm install --legacy-peer-deps
 
-      - name: Verify Environment Toolchain
-        run: |
-          echo "=== TOOLCHAIN VERSIONS ==="
-          node -v
-          bun -v
-          java -version
+    - name: Build Web Assets
+      run: npm run build
 
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
+    - name: Sync Capacitor Android
+      run: |
+        if [ ! -f "android/build.gradle" ]; then
+          echo "Initializing Android platform..."
+          rm -rf android
+          npx cap add android
+        else
+          echo "Existing Android project found."
+        fi
+        npx cap sync android
 
-      - name: Build Web Application
-        run: bun run build
+    - name: Grant execute permission for gradlew
+      run: chmod +x android/gradlew
 
-      - name: Add Capacitor Android Platform (if missing)
-        run: |
-          if [ ! -d "android" ] || [ ! -f "android/build.gradle" ]; then
-            echo "Android project missing or incomplete. Adding Android platform via Capacitor..."
-            rm -rf android
-            bunx cap add android
-          else
-            echo "Existing Android project found."
-          fi
+    - name: Build APK with Gradle
+      run: |
+        cd android
+        ./gradlew assembleDebug --stacktrace
+        ./gradlew assembleRelease --stacktrace || true
 
-      - name: Sync Capacitor Android
-        run: |
-          echo "Synchronizing Capacitor Android assets and plugins..."
-          bunx cap sync android
+    - name: Verify Generated APKs
+      run: |
+        echo "=== GENERATED APKS ==="
+        ls -la android/app/build/outputs/apk/debug/ || true
+        ls -la android/app/build/outputs/apk/release/ || true
 
-      - name: Verify Android Project Structure and Gradle Wrapper
-        run: |
-          echo "Checking required Android project components..."
-          test -f android/settings.gradle || test -f android/settings.gradle.kts || { echo "::error::Missing settings.gradle in android/"; exit 1; }
-          test -f android/build.gradle || test -f android/build.gradle.kts || { echo "::error::Missing build.gradle in android/"; exit 1; }
-          test -f android/gradlew || { echo "::error::Missing android/gradlew"; exit 1; }
-          test -d android/gradle/wrapper || { echo "::error::Missing android/gradle/wrapper directory"; exit 1; }
-          test -d android/app || { echo "::error::Missing android/app directory"; exit 1; }
-          test -f android/app/src/main/AndroidManifest.xml || { echo "::error::Missing AndroidManifest.xml in android/app/src/main/"; exit 1; }
-          
-          echo "Making android/gradlew executable..."
-          chmod +x ./android/gradlew
-          ls -la ./android/gradlew
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: Z1-MOVIES-Debug-APK
+        path: android/app/build/outputs/apk/debug/app-debug.apk
+        if-no-files-found: error
+        retention-days: 30
 
-      - name: Build Debug APK with Gradle
-        run: |
-          ./android/gradlew -p android assembleDebug --stacktrace
-
-      - name: Locate, Verify and Rename Generated APK
-        id: prepare_apk
-        run: |
-          echo "Searching for generated debug APK..."
-          FOUND_APK=$(find android -type f -name "*debug*.apk" -o -name "app-debug.apk" | head -n 1)
-          if [ -z "$FOUND_APK" ]; then
-            FOUND_APK=$(find android -type f -name "*.apk" | head -n 1)
-          fi
-
-          if [ -z "$FOUND_APK" ] || [ ! -f "$FOUND_APK" ]; then
-            echo "::error::No valid APK file found in android directory after Gradle build!"
-            exit 1
-          fi
-
-          echo "Found generated APK at: $FOUND_APK"
-          FILE_SIZE=$(stat -c%s "$FOUND_APK" 2>/dev/null || stat -f%z "$FOUND_APK" 2>/dev/null)
-          echo "APK Size: $FILE_SIZE bytes"
-
-          mkdir -p release-artifacts
-          cp "$FOUND_APK" release-artifacts/Z1-Movies-debug.apk
-          echo "Copied APK to release-artifacts/Z1-Movies-debug.apk"
-          ls -la release-artifacts/Z1-Movies-debug.apk
-
-          echo "apk_path=release-artifacts/Z1-Movies-debug.apk" >> "$GITHUB_OUTPUT"
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Z1-Movies-APK
-          path: ${{ steps.prepare_apk.outputs.apk_path }}
-          if-no-files-found: error
-          retention-days: 30
+    - name: Upload Release APK (Unsigned)
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Z1-MOVIES-Release-APK
+        path: android/app/build/outputs/apk/release/*.apk
+        if-no-files-found: ignore
+        retention-days: 30

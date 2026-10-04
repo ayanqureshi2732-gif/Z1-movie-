@@ -13,6 +13,7 @@ import { LiveTVPage } from './pages/LiveTVPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { AdminPage } from './pages/AdminPage';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
+import { VirtualPhone } from './simulator/VirtualPhone';
 
 const AppContent: React.FC = () => {
   const { route, toasts } = useApp();
@@ -95,7 +96,9 @@ const AppContent: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
-      <AppContent />
+      <VirtualPhone>
+        <AppContent />
+      </VirtualPhone>
     </AppProvider>
   );
 }
