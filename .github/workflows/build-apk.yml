@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-android:
-    name: Build Debug APK with Bun, Node 22 & Gradle
+    name: Build Z1 Movies Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -22,7 +22,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Node.js 22.x (Capacitor requirement)
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -30,60 +30,55 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Verify Toolchain Environment
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Platform and Build Tools
         run: |
-          echo "Node.js version:"
+          echo "Accepting Android SDK licenses..."
+          yes | sdkmanager --licenses || true
+          echo "Installing required Android platforms and build tools..."
+          sdkmanager "platforms;android-36" "platforms;android-35" "build-tools;36.0.0" "build-tools;35.0.0" "cmdline-tools;latest" || true
+
+      - name: Verify Environment Toolchain
+        run: |
+          echo "=== TOOLCHAIN VERSIONS ==="
           node -v
-          echo "Bun version:"
           bun -v
-          echo "Java version:"
           java -version
 
-      - name: Install Dependencies with Bun
+      - name: Install Dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build Web App
+      - name: Build Web Application
         run: bun run build
 
-      - name: Initialize or Sync Capacitor Android Project
+      - name: Add Capacitor Android Platform (if missing)
         run: |
-          if [ ! -f "android/build.gradle" ] && [ ! -f "android/build.gradle.kts" ]; then
-            echo "Android project not found or incomplete. Adding Android platform via Capacitor..."
+          if [ ! -d "android" ] || [ ! -f "android/build.gradle" ]; then
+            echo "Android project missing or incomplete. Adding Android platform via Capacitor..."
             rm -rf android
             bunx cap add android
           else
             echo "Existing Android project found."
           fi
-          echo "Syncing Capacitor Android..."
+
+      - name: Sync Capacitor Android
+        run: |
+          echo "Synchronizing Capacitor Android assets and plugins..."
           bunx cap sync android
 
-      - name: Verify Capacitor Android Project Structure
+      - name: Verify Android Project Structure and Gradle Wrapper
         run: |
-          echo "Verifying Android project structure..."
-          if [ ! -f "android/settings.gradle" ] && [ ! -f "android/settings.gradle.kts" ]; then
-            echo "ERROR: Neither android/settings.gradle nor android/settings.gradle.kts found!"
-            exit 1
-          fi
-          if [ ! -f "android/build.gradle" ] && [ ! -f "android/build.gradle.kts" ]; then
-            echo "ERROR: Neither android/build.gradle nor android/build.gradle.kts found!"
-            exit 1
-          fi
-          if [ ! -f "android/gradlew" ]; then
-            echo "ERROR: android/gradlew not found!"
-            exit 1
-          fi
-          if [ ! -d "android/gradle/wrapper" ]; then
-            echo "ERROR: android/gradle/wrapper directory not found!"
-            exit 1
-          fi
-          if [ ! -d "android/app" ]; then
-            echo "ERROR: android/app directory not found!"
-            exit 1
-          fi
-          echo "Capacitor Android project structure verified successfully."
-
-      - name: Make Gradle Wrapper Executable
-        run: |
+          echo "Checking required Android project components..."
+          test -f android/settings.gradle || test -f android/settings.gradle.kts || { echo "::error::Missing settings.gradle in android/"; exit 1; }
+          test -f android/build.gradle || test -f android/build.gradle.kts || { echo "::error::Missing build.gradle in android/"; exit 1; }
+          test -f android/gradlew || { echo "::error::Missing android/gradlew"; exit 1; }
+          test -d android/gradle/wrapper || { echo "::error::Missing android/gradle/wrapper directory"; exit 1; }
+          test -d android/app || { echo "::error::Missing android/app directory"; exit 1; }
+          test -f android/app/src/main/AndroidManifest.xml || { echo "::error::Missing AndroidManifest.xml in android/app/src/main/"; exit 1; }
+          
+          echo "Making android/gradlew executable..."
           chmod +x ./android/gradlew
           ls -la ./android/gradlew
 
@@ -91,22 +86,35 @@ jobs:
         run: |
           ./android/gradlew -p android assembleDebug --stacktrace
 
-      - name: Find Generated APK
-        id: find_apk
+      - name: Locate, Verify and Rename Generated APK
+        id: prepare_apk
         run: |
-          echo "Searching for generated APK files..."
-          APK_FILE=$(find android -type f -name "*.apk" | head -n 1)
-          if [ -z "$APK_FILE" ]; then
-            echo "ERROR: No APK file was generated!"
+          echo "Searching for generated debug APK..."
+          FOUND_APK=$(find android -type f -name "*debug*.apk" -o -name "app-debug.apk" | head -n 1)
+          if [ -z "$FOUND_APK" ]; then
+            FOUND_APK=$(find android -type f -name "*.apk" | head -n 1)
+          fi
+
+          if [ -z "$FOUND_APK" ] || [ ! -f "$FOUND_APK" ]; then
+            echo "::error::No valid APK file found in android directory after Gradle build!"
             exit 1
           fi
-          echo "Found APK at: $APK_FILE"
-          echo "apk_path=$APK_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Debug APK Artifact
+          echo "Found generated APK at: $FOUND_APK"
+          FILE_SIZE=$(stat -c%s "$FOUND_APK" 2>/dev/null || stat -f%z "$FOUND_APK" 2>/dev/null)
+          echo "APK Size: $FILE_SIZE bytes"
+
+          mkdir -p release-artifacts
+          cp "$FOUND_APK" release-artifacts/Z1-Movies-debug.apk
+          echo "Copied APK to release-artifacts/Z1-Movies-debug.apk"
+          ls -la release-artifacts/Z1-Movies-debug.apk
+
+          echo "apk_path=release-artifacts/Z1-Movies-debug.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Z1-Movies-Debug-APK
-          path: ${{ steps.find_apk.outputs.apk_path }}
+          name: Z1-Movies-APK
+          path: ${{ steps.prepare_apk.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 30
