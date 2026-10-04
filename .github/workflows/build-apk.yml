@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-android:
-    name: Build Debug APK with Bun & Gradle
+    name: Build Debug APK with Bun, Node 22 & Gradle
     runs-on: ubuntu-latest
 
     steps:
@@ -23,13 +23,22 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      - name: Set up Node.js 22.x (Capacitor requirement)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Set up Node.js Runtime
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Verify Toolchain Environment
+        run: |
+          echo "Node.js version:"
+          node -v
+          echo "Bun version:"
+          bun -v
+          echo "Java version:"
+          java -version
 
       - name: Install Dependencies with Bun
         run: bun install --frozen-lockfile
