@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-android:
-    name: Build Debug APK
+    name: Build Debug APK with Bun & Gradle
     runs-on: ubuntu-latest
 
     steps:
@@ -23,20 +23,22 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Set up Node.js
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node.js Runtime
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
-      - name: Install Dependencies
-        run: npm install
+      - name: Install Dependencies with Bun
+        run: bun install --frozen-lockfile
 
       - name: Build Web App
-        run: npm run build
+        run: bun run build
 
       - name: Sync Capacitor Android
-        run: npx cap sync android
+        run: bunx cap sync android
 
       - name: Make Gradle Wrapper Executable
         run: chmod +x android/gradlew
