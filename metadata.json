@@ -1,0 +1,6 @@
+{
+  "name": "Z1 MOVIES",
+  "description": "Premium mobile-first OTT movie streaming app with dark cinematic theme, real video player, live channels, and full admin studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
