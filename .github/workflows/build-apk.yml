@@ -20,11 +20,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Set up Java 17
+      - name: Set up Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -67,14 +67,11 @@ jobs:
           chmod +x android/gradlew
           ls -l android/gradlew
 
-      - name: Show Android Build Configuration
+      - name: Verify Java and Gradle
         run: |
           java -version
-          node --version
-          npm --version
           cd android
           ./gradlew --version
-          ./gradlew tasks --stacktrace
 
       - name: Build Debug APK
         run: |
