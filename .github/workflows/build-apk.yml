@@ -22,9 +22,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
       - name: Set up Node.js 22.x (Capacitor requirement)
         uses: actions/setup-node@v4
         with:
@@ -48,27 +45,45 @@ jobs:
       - name: Build Web App
         run: bun run build
 
-      - name: Ensure Android Project and Capacitor Sync
+      - name: Initialize or Sync Capacitor Android Project
         run: |
-          if [ ! -d "android" ]; then
-            echo "Android directory not found. Adding Android platform via Capacitor..."
+          if [ ! -f "android/build.gradle" ] && [ ! -f "android/build.gradle.kts" ]; then
+            echo "Android project not found or incomplete. Adding Android platform via Capacitor..."
+            rm -rf android
             bunx cap add android
           else
-            echo "Android directory exists. Syncing Capacitor..."
-            bunx cap sync android
+            echo "Existing Android project found."
           fi
+          echo "Syncing Capacitor Android..."
+          bunx cap sync android
 
-      - name: Ensure Gradle Wrapper and Permissions
+      - name: Verify Capacitor Android Project Structure
         run: |
-          if [ ! -f "android/gradlew" ]; then
-            echo "android/gradlew not found. Generating Gradle wrapper..."
-            if ! command -v gradle &> /dev/null; then
-              sudo apt-get update && sudo apt-get install -y gradle
-            fi
-            (cd android && gradle wrapper)
+          echo "Verifying Android project structure..."
+          if [ ! -f "android/settings.gradle" ] && [ ! -f "android/settings.gradle.kts" ]; then
+            echo "ERROR: Neither android/settings.gradle nor android/settings.gradle.kts found!"
+            exit 1
           fi
+          if [ ! -f "android/build.gradle" ] && [ ! -f "android/build.gradle.kts" ]; then
+            echo "ERROR: Neither android/build.gradle nor android/build.gradle.kts found!"
+            exit 1
+          fi
+          if [ ! -f "android/gradlew" ]; then
+            echo "ERROR: android/gradlew not found!"
+            exit 1
+          fi
+          if [ ! -d "android/gradle/wrapper" ]; then
+            echo "ERROR: android/gradle/wrapper directory not found!"
+            exit 1
+          fi
+          if [ ! -d "android/app" ]; then
+            echo "ERROR: android/app directory not found!"
+            exit 1
+          fi
+          echo "Capacitor Android project structure verified successfully."
 
-          echo "Ensuring android/gradlew is executable..."
+      - name: Make Gradle Wrapper Executable
+        run: |
           chmod +x ./android/gradlew
           ls -la ./android/gradlew
 
