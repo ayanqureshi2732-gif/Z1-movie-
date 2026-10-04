@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navbar } from './components/Navbar';
 import { BottomNav } from './components/BottomNav';
@@ -13,10 +13,45 @@ import { LiveTVPage } from './pages/LiveTVPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { AdminPage } from './pages/AdminPage';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
-import { VirtualPhone } from './simulator/VirtualPhone';
+import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 
 const AppContent: React.FC = () => {
-  const { route, toasts } = useApp();
+  const { route, navigate, goBack, toasts } = useApp();
+
+  // Native Android Hardware Back Button Handling
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let isMounted = true;
+    let listenerHandle: { remove: () => Promise<void> } | null = null;
+
+    CapApp.addListener('backButton', () => {
+      // If playing a video or viewing movie details, return to Home screen
+      if (route.path.startsWith('/player/') || route.path.startsWith('/movie/')) {
+        navigate({ path: '/' });
+      } else if (route.path !== '/') {
+        // Return to Home screen or previous route
+        goBack();
+      } else {
+        // On home screen root, exit app
+        CapApp.exitApp();
+      }
+    }).then((handle) => {
+      if (isMounted) {
+        listenerHandle = handle;
+      } else {
+        handle.remove();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (listenerHandle) {
+        listenerHandle.remove();
+      }
+    };
+  }, [route.path, navigate, goBack]);
 
   // If in dedicated video player mode: hide header, hide bottom nav, render full player view
   if (route.path === '/player/:id') {
@@ -59,7 +94,6 @@ const AppContent: React.FC = () => {
       <Navbar />
 
       {/* Main Page Area in Normal Document Flow */}
-      {/* pb-20 on mobile ensures bottom navigation never obscures content */}
       <main className="flex-1 w-full pb-20 md:pb-6 relative z-10 bg-[#08080b]">
         {renderActivePage()}
       </main>
@@ -96,9 +130,7 @@ const AppContent: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
-      <VirtualPhone>
-        <AppContent />
-      </VirtualPhone>
+      <AppContent />
     </AppProvider>
   );
 }
