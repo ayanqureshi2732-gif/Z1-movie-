@@ -2,7 +2,7 @@ name: Build Android APK (Z1 MOVIES)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
@@ -11,73 +11,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Node.js 22.x
-      uses: actions/setup-node@v4
-      with:
-        node-version: 22
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
 
-    - name: Set up Java 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
 
-    - name: Accept Android SDK Licenses & Install Tools
-      run: |
-        yes | sdkmanager --licenses || true
-        sdkmanager "platforms;android-36" "platforms;android-35" "build-tools;36.0.0" "build-tools;35.0.0" || true
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+          yes | sdkmanager --licenses
 
-    - name: Install Dependencies
-      run: npm install --legacy-peer-deps
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
 
-    - name: Build Web Assets
-      run: npm run build
+      - name: Build Web Assets
+        run: npm run build
 
-    - name: Sync Capacitor Android
-      run: |
-        if [ ! -f "android/build.gradle" ]; then
-          echo "Initializing Android platform..."
-          rm -rf android
-          npx cap add android
-        else
-          echo "Existing Android project found."
-        fi
-        npx cap sync android
+      - name: Sync Capacitor Android
+        run: npx cap sync android
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
 
-    - name: Build APK with Gradle
-      run: |
-        cd android
-        ./gradlew assembleDebug --stacktrace
-        ./gradlew assembleRelease --stacktrace || true
+      - name: Build Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --stacktrace
 
-    - name: Verify Generated APKs
-      run: |
-        echo "=== GENERATED APKS ==="
-        ls -la android/app/build/outputs/apk/debug/ || true
-        ls -la android/app/build/outputs/apk/release/ || true
+      - name: Verify Generated APK
+        run: |
+          ls -lh android/app/build/outputs/apk/debug/
 
-    - name: Upload Debug APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: Z1-MOVIES-Debug-APK
-        path: android/app/build/outputs/apk/debug/app-debug.apk
-        if-no-files-found: error
-        retention-days: 30
-
-    - name: Upload Release APK (Unsigned)
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: Z1-MOVIES-Release-APK
-        path: android/app/build/outputs/apk/release/*.apk
-        if-no-files-found: ignore
-        retention-days: 30
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Z1-MOVIES-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
