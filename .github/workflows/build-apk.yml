@@ -21,7 +21,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Set up Node.js 22.x (Capacitor requirement)
         uses: actions/setup-node@v4
@@ -46,26 +48,50 @@ jobs:
       - name: Build Web App
         run: bun run build
 
-      - name: Sync Capacitor Android
-        run: bunx cap sync android
+      - name: Ensure Android Project and Capacitor Sync
+        run: |
+          if [ ! -d "android" ]; then
+            echo "Android directory not found. Adding Android platform via Capacitor..."
+            bunx cap add android
+          else
+            echo "Android directory exists. Syncing Capacitor..."
+            bunx cap sync android
+          fi
 
-      - name: Make Gradle Wrapper Executable
-        run: chmod +x android/gradlew
+      - name: Ensure Gradle Wrapper and Permissions
+        run: |
+          if [ ! -f "android/gradlew" ]; then
+            echo "android/gradlew not found. Generating Gradle wrapper..."
+            if ! command -v gradle &> /dev/null; then
+              sudo apt-get update && sudo apt-get install -y gradle
+            fi
+            (cd android && gradle wrapper)
+          fi
+
+          echo "Ensuring android/gradlew is executable..."
+          chmod +x ./android/gradlew
+          ls -la ./android/gradlew
 
       - name: Build Debug APK with Gradle
         run: |
-          cd android
-          ./gradlew assembleDebug --stacktrace
+          ./android/gradlew -p android assembleDebug --stacktrace
 
-      - name: Verify Generated APK
+      - name: Find Generated APK
+        id: find_apk
         run: |
-          echo "Verifying generated APK binary..."
-          ls -la android/app/build/outputs/apk/debug/app-debug.apk
+          echo "Searching for generated APK files..."
+          APK_FILE=$(find android -type f -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "ERROR: No APK file was generated!"
+            exit 1
+          fi
+          echo "Found APK at: $APK_FILE"
+          echo "apk_path=$APK_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Z1-Movies-Debug-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.find_apk.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 30
