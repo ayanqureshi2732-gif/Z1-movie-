@@ -112,6 +112,69 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // Auto-sync completed background uploads into movie state
+  useEffect(() => {
+    const handleUploadComplete = (event: any) => {
+      const { queueItem, mediaUrl } = event.detail || {};
+      if (queueItem && mediaUrl) {
+        const meta = queueItem.movieMetadata || {};
+        const cleanTitle = meta.title || queueItem.fileName.replace(/\.[^/.]+$/, '');
+        const posterUrl = meta.posterUrl || queueItem.thumbnailUrl || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=800&auto=format&fit=crop';
+        const backdropUrl = meta.backdropUrl || queueItem.thumbnailUrl || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=1400&auto=format&fit=crop';
+
+        const newMovie: Movie = {
+          id: queueItem.targetMovieId || `movie_${Date.now()}`,
+          title: cleanTitle,
+          description: meta.description || 'Uploaded movie streaming on Z1 MOVIES with Dolby audio.',
+          posterUrl,
+          backdropUrl,
+          videoUrl: mediaUrl,
+          year: meta.year || new Date().getFullYear(),
+          language: meta.language || 'Hindi',
+          genre: meta.genre || ['Action', 'Thriller'],
+          duration: meta.duration || '2h 10m',
+          rating: meta.rating || 8.5,
+          cast: meta.cast || ['Featured Cast'],
+          director: meta.director || 'Z1 Productions',
+          isTrending: meta.isTrending ?? false,
+          isFeatured: meta.isFeatured ?? false,
+          isNewRelease: meta.isNewRelease ?? true,
+          isTop10: meta.isTop10 ?? false,
+          isPremium: meta.isPremium ?? false,
+          isPublished: meta.isPublished ?? true,
+          createdAt: new Date().toISOString(),
+          audioTracks: queueItem.audioTracks || [
+            {
+              id: 'track-1',
+              language: meta.language || 'Hindi',
+              label: `${meta.language || 'Hindi'} (Original 5.1 / Stereo)`,
+              codec: 'AAC',
+              isDefault: true,
+            },
+          ],
+        };
+
+        setMovies((prev) => {
+          const idx = prev.findIndex((m) => m.id === newMovie.id);
+          let updated: Movie[];
+          if (idx >= 0) {
+            updated = [...prev];
+            updated[idx] = { ...updated[idx], ...newMovie };
+          } else {
+            updated = [newMovie, ...prev];
+          }
+          saveMovies(updated);
+          return updated;
+        });
+
+        showToast(`"${newMovie.title}" is Ready & Published!`, 'success');
+      }
+    };
+
+    window.addEventListener('Z1_MOVIE_UPLOAD_COMPLETE', handleUploadComplete);
+    return () => window.removeEventListener('Z1_MOVIE_UPLOAD_COMPLETE', handleUploadComplete);
+  }, []);
+
   const navigate = (newRoute: AppRoute) => {
     const path = routeToPath(newRoute);
     window.history.pushState({}, '', path);

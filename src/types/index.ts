@@ -1,3 +1,18 @@
+export interface AudioTrack {
+  id: string;
+  language: string; // e.g. "Hindi", "Tamil", "Telugu", "English", "Spanish"
+  label: string; // e.g. "Hindi (Original 5.1)", "English (Dubbed)"
+  codec?: string; // "AAC", "AC3", "EAC3", "MP3"
+  audioUrl?: string; // Optional separate dubbed audio URL synchronized with video
+  isDefault?: boolean;
+}
+
+export interface VideoQualityOption {
+  label: string; // "4K Ultra HD", "1080p Full HD", "720p HD", "480p SD"
+  url: string;
+  bitrate?: string;
+}
+
 export interface Movie {
   id: string;
   title: string;
@@ -22,6 +37,8 @@ export interface Movie {
   isPublished: boolean;
   createdAt: string;
   views?: number;
+  audioTracks?: AudioTrack[];
+  qualities?: VideoQualityOption[];
 }
 
 export interface WatchHistoryItem {
@@ -52,6 +69,36 @@ export interface LiveChannel {
   viewersCount: number;
 }
 
+export type UploadStatus =
+  | 'queued'
+  | 'uploading'
+  | 'processing'
+  | 'completed'
+  | 'paused'
+  | 'failed'
+  | 'cancelled';
+
+export interface UploadQueueItem {
+  id: string;
+  file?: File;
+  fileName: string;
+  fileSize: number;
+  thumbnailUrl?: string;
+  progress: number; // 0 - 100
+  uploadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  status: UploadStatus;
+  errorMessage?: string;
+  sessionId?: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  targetMovieId?: string;
+  movieMetadata?: Partial<Movie>;
+  audioTracks?: AudioTrack[];
+}
+
 export type AppRoute =
   | { path: '/' }
   | { path: '/movies' }
@@ -62,4 +109,4 @@ export type AppRoute =
   | { path: '/my-list' }
   | { path: '/live-tv'; channelId?: string }
   | { path: '/profile' }
-  | { path: '/admin' };
+  | { path: '/admin'; tab?: 'movies' | 'uploads' | 'add' | 'supabase' };

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   ShieldAlert,
   Upload,
@@ -12,54 +12,100 @@ import {
   Cloud,
   Film,
   Play,
+  Pause,
   RotateCcw,
   Check,
   Database,
   Lock,
   Unlock,
+  Layers,
+  ArrowRight,
+  RefreshCw,
+  X,
+  Languages,
+  Clock,
+  HardDrive,
+  FileVideo,
+  ListOrdered,
+  Search,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Movie } from '../types';
-import {
-  uploadVideoFile,
-  uploadImageFile,
-  UploadResult,
-} from '../services/uploadService';
+import { Movie, AudioTrack, UploadQueueItem } from '../types';
+import { uploadImageFile } from '../services/uploadService';
 import {
   getSupabaseConfig,
   saveSupabaseConfig,
   SupabaseConfig,
 } from '../services/db';
+import { useUploadManager } from '../hooks/useUploadManager';
 
 export const AdminPage: React.FC = () => {
-  const { movies, addMovie, updateMovie, deleteMovie, togglePublish, navigate, showToast } =
+  const { movies, addMovie, updateMovie, deleteMovie, togglePublish, navigate, showToast, route } =
     useApp();
 
-  // Admin PIN protection (simple security layer)
+  const {
+    queue,
+    activeUploads,
+    queuedUploads,
+    completedUploads,
+    failedUploads,
+    pausedUploads,
+    overallProgress,
+    totalSpeedBytesPerSec,
+    addFilesToQueue,
+    pauseUpload,
+    resumeUpload,
+    cancelUpload,
+    retryUpload,
+    removeItem,
+    pauseAll,
+    resumeAll,
+    cancelAll,
+    clearCompleted,
+  } = useUploadManager();
+
+  // Admin PIN protection
   const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState(false);
 
-  // Tab: 'movies' | 'add' | 'supabase'
-  const [activeTab, setActiveTab] = useState<'movies' | 'add' | 'supabase'>('movies');
+  // Tabs: 'uploads' | 'movies' | 'add' | 'supabase'
+  const initialTab = (route as any).tab || 'uploads';
+  const [activeTab, setActiveTab] = useState<'uploads' | 'movies' | 'add' | 'supabase'>(initialTab);
 
-  // Editing state
+  // Search in Uploads / Movies
+  const [uploadSearchQuery, setUploadSearchQuery] = useState('');
+  const [uploadStatusFilter, setUploadStatusFilter] = useState<'all' | 'uploading' | 'queued' | 'completed' | 'failed'>('all');
+
+  // Editing movie state
   const [editingMovieId, setEditingMovieId] = useState<string | null>(null);
 
   // Form Fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [year, setYear] = useState<number>(2026);
-  const [language, setLanguage] = useState('English');
+  const [language, setLanguage] = useState('Hindi');
   const [genreInput, setGenreInput] = useState('Action, Sci-Fi');
   const [duration, setDuration] = useState('2h 10m');
   const [rating, setRating] = useState<number>(8.8);
-  const [castInput, setCastInput] = useState('John Doe, Jane Smith');
-  const [director, setDirector] = useState('Christopher Nolan');
+  const [castInput, setCastInput] = useState('Featured Cast');
+  const [director, setDirector] = useState('Z1 Productions');
   const [posterUrl, setPosterUrl] = useState('');
   const [backdropUrl, setBackdropUrl] = useState('');
   const [trailerUrl, setTrailerUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
+
+  // Audio Tracks for Movie
+  const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([
+    { id: 'track-1', language: 'Hindi', label: 'Hindi (Original 5.1)', codec: 'AAC', isDefault: true },
+    { id: 'track-2', language: 'English', label: 'English (Dubbed Stereo)', codec: 'AAC' },
+    { id: 'track-3', language: 'Tamil', label: 'Tamil (Dubbed Stereo)', codec: 'AAC' },
+    { id: 'track-4', language: 'Telugu', label: 'Telugu (Dubbed Stereo)', codec: 'AAC' },
+  ]);
+
+  // Multiple Video Files Selection
+  const [selectedVideoFiles, setSelectedVideoFiles] = useState<File[]>([]);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   // Toggles
   const [isTrending, setIsTrending] = useState(true);
@@ -70,17 +116,7 @@ export const AdminPage: React.FC = () => {
   const [isPremium, setIsPremium] = useState(false);
   const [isPublished, setIsPublished] = useState(true);
 
-  // Upload States
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [videoUploadProgress, setVideoUploadProgress] = useState(0);
-  const [videoUploadedBytes, setVideoUploadedBytes] = useState(0);
-  const [videoTotalBytes, setVideoTotalBytes] = useState(0);
-  const [videoUploadStatus, setVideoUploadStatus] = useState<
-    'idle' | 'uploading' | 'success' | 'error'
-  >('idle');
-  const [videoUploadError, setVideoUploadError] = useState('');
-  const videoInputRef = useRef<HTMLInputElement>(null);
-
+  // Poster & Backdrop Files
   const [posterFile, setPosterFile] = useState<File | null>(null);
   const [posterUploading, setPosterUploading] = useState(false);
   const posterInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +131,12 @@ export const AdminPage: React.FC = () => {
   );
   const [supabaseSavedNotice, setSupabaseSavedNotice] = useState(false);
 
+  useEffect(() => {
+    if ((route as any).tab) {
+      setActiveTab((route as any).tab);
+    }
+  }, [route]);
+
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput === '1234' || pinInput === 'z1' || pinInput.toLowerCase() === 'admin') {
@@ -105,42 +147,53 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  const handleVideoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setVideoFile(file);
-      setVideoUploadStatus('idle');
-      setVideoUploadProgress(0);
-      setVideoUploadError('');
+  // MULTIPLE FILE SELECTION HANDLER
+  const handleMultipleVideoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      setSelectedVideoFiles(files);
+      if (files.length === 1 && !title) {
+        setTitle(files[0].name.replace(/\.[^/.]+$/, '').replace(/[._-]/g, ' '));
+      }
+      showToast(`${files.length} video file${files.length > 1 ? 's' : ''} selected`, 'info');
     }
   };
 
-  const handleStartVideoUpload = async () => {
-    if (!videoFile) return;
-    setVideoUploadStatus('uploading');
-    setVideoUploadProgress(0);
-    setVideoUploadError('');
-
-    try {
-      const result: UploadResult = await uploadVideoFile(
-        videoFile,
-        (progress, loaded, total) => {
-          setVideoUploadProgress(progress);
-          setVideoUploadedBytes(loaded);
-          setVideoTotalBytes(total);
-        }
-      );
-      setVideoUrl(result.url);
-      setVideoUploadStatus('success');
-      showToast(
-        `Video uploaded (${(result.fileSize / (1024 * 1024)).toFixed(1)} MB)`,
-        'success'
-      );
-    } catch (err: any) {
-      setVideoUploadStatus('error');
-      setVideoUploadError(err.message || 'Video upload pipeline failed');
-      showToast('Video upload failed', 'error');
+  // Start Batch Upload into Queue
+  const handleStartBatchUpload = async () => {
+    if (selectedVideoFiles.length === 0) {
+      showToast('Please select one or more video files first', 'error');
+      return;
     }
+
+    const sharedMetadata: Partial<Movie> = {
+      title: title.trim() || undefined,
+      description: description.trim() || undefined,
+      year,
+      language,
+      genre: genreInput.split(',').map((g) => g.trim()).filter(Boolean),
+      duration,
+      rating,
+      cast: castInput.split(',').map((c) => c.trim()).filter(Boolean),
+      director: director.trim(),
+      posterUrl: posterUrl.trim() || undefined,
+      backdropUrl: backdropUrl.trim() || undefined,
+      trailerUrl: trailerUrl.trim() || undefined,
+      isTrending,
+      isFeatured,
+      isNewRelease,
+      isTop10,
+      top10Rank: isTop10 ? top10Rank : undefined,
+      isPremium,
+      isPublished,
+      audioTracks,
+    };
+
+    const added = await addFilesToQueue(selectedVideoFiles, sharedMetadata, editingMovieId || undefined);
+    showToast(`${added.length} video${added.length > 1 ? 's' : ''} added to Upload Queue`, 'success');
+    setSelectedVideoFiles([]);
+    if (videoInputRef.current) videoInputRef.current.value = '';
+    setActiveTab('uploads');
   };
 
   const handlePosterSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -177,24 +230,45 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  // Add / Edit Audio Track
+  const handleAddAudioTrack = () => {
+    const newTrack: AudioTrack = {
+      id: `track_${Date.now()}`,
+      language: 'Tamil',
+      label: 'Tamil [Dubbed] (Stereo)',
+      codec: 'AAC',
+    };
+    setAudioTracks((prev) => [...prev, newTrack]);
+  };
+
+  const handleUpdateAudioTrack = (index: number, updated: Partial<AudioTrack>) => {
+    setAudioTracks((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], ...updated };
+      return copy;
+    });
+  };
+
+  const handleRemoveAudioTrack = (index: number) => {
+    setAudioTracks((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const resetForm = () => {
     setEditingMovieId(null);
     setTitle('');
     setDescription('');
     setYear(2026);
-    setLanguage('English');
+    setLanguage('Hindi');
     setGenreInput('Action, Sci-Fi');
     setDuration('2h 10m');
     setRating(8.8);
-    setCastInput('');
-    setDirector('');
+    setCastInput('Featured Cast');
+    setDirector('Z1 Productions');
     setPosterUrl('');
     setBackdropUrl('');
     setTrailerUrl('');
     setVideoUrl('');
-    setVideoFile(null);
-    setVideoUploadProgress(0);
-    setVideoUploadStatus('idle');
+    setSelectedVideoFiles([]);
     setIsTrending(false);
     setIsFeatured(false);
     setIsNewRelease(true);
@@ -218,6 +292,9 @@ export const AdminPage: React.FC = () => {
     setBackdropUrl(movie.backdropUrl);
     setTrailerUrl(movie.trailerUrl || '');
     setVideoUrl(movie.videoUrl);
+    if (movie.audioTracks && movie.audioTracks.length > 0) {
+      setAudioTracks(movie.audioTracks);
+    }
     setIsTrending(movie.isTrending);
     setIsFeatured(movie.isFeatured);
     setIsNewRelease(movie.isNewRelease);
@@ -237,6 +314,12 @@ export const AdminPage: React.FC = () => {
       return;
     }
 
+    // If videos are selected, trigger batch upload queue
+    if (selectedVideoFiles.length > 0) {
+      handleStartBatchUpload();
+      return;
+    }
+
     const finalVideoUrl =
       videoUrl.trim() ||
       'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4';
@@ -248,40 +331,37 @@ export const AdminPage: React.FC = () => {
       'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=1400&auto=format&fit=crop';
 
     const movieData: Movie = {
-      id: editingMovieId || `movie-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      id: editingMovieId || `movie_${Date.now()}`,
       title: title.trim(),
-      description: description.trim() || 'No description provided.',
+      description: description.trim() || 'A high-stakes cinematic thrill-ride streaming on Z1 MOVIES.',
+      year,
+      language,
+      genre: genreInput.split(',').map((g) => g.trim()).filter(Boolean),
+      duration,
+      rating,
+      cast: castInput.split(',').map((c) => c.trim()).filter(Boolean),
+      director: director.trim() || 'Z1 Productions',
       posterUrl: finalPosterUrl,
       backdropUrl: finalBackdropUrl,
-      videoUrl: finalVideoUrl,
       trailerUrl: trailerUrl.trim() || undefined,
-      year: Number(year) || 2026,
-      language: language.trim() || 'English',
-      genre: genreInput
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      duration: duration.trim() || '2h 00m',
-      rating: Number(rating) || 8.0,
-      cast: castInput
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      director: director.trim() || 'Unknown Director',
+      videoUrl: finalVideoUrl,
       isTrending,
       isFeatured,
       isNewRelease,
       isTop10,
-      top10Rank: isTop10 ? Number(top10Rank) : undefined,
+      top10Rank: isTop10 ? top10Rank : undefined,
       isPremium,
       isPublished,
       createdAt: new Date().toISOString(),
+      audioTracks,
     };
 
     if (editingMovieId) {
       updateMovie(movieData);
+      showToast('Movie updated successfully', 'success');
     } else {
       addMovie(movieData);
+      showToast('Movie created and published', 'success');
     }
 
     resetForm();
@@ -292,49 +372,66 @@ export const AdminPage: React.FC = () => {
     e.preventDefault();
     saveSupabaseConfig(supabaseConfig);
     setSupabaseSavedNotice(true);
-    showToast('Supabase settings saved', 'success');
     setTimeout(() => setSupabaseSavedNotice(false), 3000);
+    showToast('Storage settings saved', 'success');
   };
 
-  // If not authenticated, show PIN prompt
+  // Filtered queue items
+  const filteredQueue = queue.filter((item) => {
+    const matchesSearch =
+      item.fileName.toLowerCase().includes(uploadSearchQuery.toLowerCase()) ||
+      (item.movieMetadata?.title &&
+        item.movieMetadata.title.toLowerCase().includes(uploadSearchQuery.toLowerCase()));
+
+    if (!matchesSearch) return false;
+    if (uploadStatusFilter === 'all') return true;
+    if (uploadStatusFilter === 'uploading') return item.status === 'uploading';
+    if (uploadStatusFilter === 'queued') return item.status === 'queued';
+    if (uploadStatusFilter === 'completed') return item.status === 'completed';
+    if (uploadStatusFilter === 'failed') return item.status === 'failed' || item.status === 'paused';
+    return true;
+  });
+
+  const speedMb = (totalSpeedBytesPerSec / (1024 * 1024)).toFixed(1);
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#08080b] flex items-center justify-center p-4">
-        <div className="w-full max-w-md p-6 sm:p-8 rounded-2xl bg-[#121218] border border-white/10 shadow-2xl text-center">
-          <div className="w-12 h-12 rounded-2xl bg-red-600/20 text-red-500 border border-red-500/30 flex items-center justify-center mx-auto mb-4">
-            <Lock className="w-6 h-6" />
+        <div className="w-full max-w-md bg-[#12131a] border border-white/10 rounded-2xl p-6 sm:p-8 shadow-2xl">
+          <div className="flex justify-center mb-4">
+            <div className="w-14 h-14 rounded-2xl bg-red-600/10 border border-red-500/30 flex items-center justify-center text-red-500">
+              <Lock className="w-7 h-7" />
+            </div>
           </div>
-          <h2 className="text-xl font-bold text-white mb-1">Z1 Admin Verification</h2>
-          <p className="text-xs text-gray-400 mb-6">
-            Enter admin PIN code to manage movies, upload videos, and adjust cloud storage.
+          <h2 className="text-xl font-bold text-center text-white mb-1">
+            Z1 Admin Authentication
+          </h2>
+          <p className="text-xs text-gray-400 text-center mb-6">
+            Enter Admin PIN to manage movies, batch uploads, and cloud storage. (Default: 1234)
           </p>
 
           <form onSubmit={handlePinSubmit} className="space-y-4">
-            <input
-              type="password"
-              placeholder="Enter PIN (Default: 1234)"
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              className="w-full text-center tracking-widest text-lg px-4 py-3 rounded-xl bg-black border border-white/15 text-white focus:outline-none focus:border-red-500"
-              autoFocus
-            />
-            {pinError && (
-              <p className="text-xs text-red-500 font-medium">
-                Incorrect PIN. Use &quot;1234&quot; or &quot;admin&quot; to unlock.
-              </p>
-            )}
+            <div>
+              <input
+                type="password"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="Enter Admin PIN"
+                className="w-full px-4 py-3 rounded-xl bg-black/50 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-red-500 text-center text-lg tracking-widest font-mono"
+                autoFocus
+              />
+              {pinError && (
+                <p className="text-red-400 text-xs mt-1.5 text-center">
+                  Invalid PIN. Default is 1234.
+                </p>
+              )}
+            </div>
+
             <button
               type="submit"
-              className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-sm transition-colors cursor-pointer"
+              className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-500 active:scale-98 text-white font-bold text-sm shadow-lg transition-all cursor-pointer"
             >
-              Authorize Studio Access
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsAuthenticated(true)}
-              className="w-full text-xs text-gray-400 hover:text-white pt-2 cursor-pointer"
-            >
-              Quick Test Unlock
+              Unlock Admin Studio
             </button>
           </form>
         </div>
@@ -343,29 +440,82 @@ export const AdminPage: React.FC = () => {
   }
 
   return (
-    <div className="w-full min-h-screen bg-[#08080b] text-white px-4 sm:px-6 py-6 pb-24 md:pb-12 max-w-7xl mx-auto">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold font-brand tracking-tight flex items-center gap-2">
-            <ShieldAlert className="w-7 h-7 text-red-500" />
-            <span>Z1 Cinema Admin Studio</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-gray-400 mt-1">
-            Publish movies, perform real video uploads from mobile devices, and configure Supabase.
-          </p>
+    <div className="min-h-screen bg-[#08080b] text-white">
+      {/* Studio Header Bar */}
+      <div className="border-b border-white/[0.08] bg-[#0c0d12]/90 backdrop-blur-md sticky top-14 sm:top-16 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-600 to-red-800 flex items-center justify-center text-white shadow-lg shadow-red-600/20">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg sm:text-xl font-bold text-white tracking-wide">
+                  Z1 Admin Studio
+                </h1>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-600/20 border border-red-500/30 text-red-400 uppercase tracking-wider">
+                  Cloud Management
+                </span>
+              </div>
+              <p className="text-xs text-gray-400">
+                Resumable chunked uploads, multi-audio tracks & catalog curation
+              </p>
+            </div>
+          </div>
+
+          {/* Top Quick Status Pill */}
+          <div className="flex items-center gap-2">
+            {activeUploads.length > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-950/40 border border-red-500/30 text-xs font-semibold text-red-400">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span>{activeUploads.length} Uploading · {speedMb} MB/s</span>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                resetForm();
+                setActiveTab('add');
+              }}
+              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-semibold text-xs flex items-center gap-1.5 shadow-lg shadow-red-600/25 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Upload Video</span>
+            </button>
+          </div>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-1.5 bg-[#121218] p-1 rounded-xl border border-white/10 self-start sm:self-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-1 overflow-x-auto no-scrollbar">
           <button
-            onClick={() => setActiveTab('movies')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'movies' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
+            onClick={() => setActiveTab('uploads')}
+            className={`px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'uploads'
+                ? 'border-red-500 text-red-500'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
-            <Film className="w-3.5 h-3.5" />
-            <span>Catalog ({movies.length})</span>
+            <Upload className="w-4 h-4" />
+            <span>Upload Center</span>
+            {queue.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-white">
+                {queue.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('movies')}
+            className={`px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'movies'
+                ? 'border-red-500 text-red-500'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <Film className="w-4 h-4" />
+            <span>Movie Catalog</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-white">
+              {movies.length}
+            </span>
           </button>
 
           <button
@@ -373,151 +523,416 @@ export const AdminPage: React.FC = () => {
               if (activeTab !== 'add') resetForm();
               setActiveTab('add');
             }}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'add' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
+            className={`px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'add'
+                ? 'border-red-500 text-red-500'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             <span>{editingMovieId ? 'Edit Movie' : 'Add Movie'}</span>
           </button>
 
           <button
             onClick={() => setActiveTab('supabase')}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'supabase' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'
+            className={`px-4 py-3 text-xs sm:text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'supabase'
+                ? 'border-red-500 text-red-500'
+                : 'border-transparent text-gray-400 hover:text-gray-200'
             }`}
           >
-            <Cloud className="w-3.5 h-3.5" />
-            <span>Supabase Cloud</span>
+            <Cloud className="w-4 h-4" />
+            <span>Storage & Cloud</span>
           </button>
         </div>
       </div>
 
-      {/* TAB 1: MOVIES CATALOG TABLE */}
+      {/* TAB 1: UPLOAD CENTER & QUEUE MANAGER */}
+      {activeTab === 'uploads' && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+          {/* Top Queue Controls & Concurrency Stats */}
+          <div className="bg-[#12131a] border border-white/10 rounded-2xl p-5 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="relative w-14 h-14 flex-shrink-0 flex items-center justify-center">
+                <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="15" fill="none" className="stroke-white/10" strokeWidth="3" />
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="15"
+                    fill="none"
+                    className="stroke-red-500 transition-all duration-300"
+                    strokeWidth="3"
+                    strokeDasharray="94.2"
+                    strokeDashoffset={94.2 - (94.2 * overallProgress) / 100}
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <div className="absolute text-xs font-bold text-white">
+                  {overallProgress}%
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>Batch Upload Queue</span>
+                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/10 text-gray-300">
+                    Max 3 Concurrent
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {activeUploads.length > 0
+                    ? `${activeUploads.length} uploading (${speedMb} MB/s) · ${queuedUploads.length} queued in line`
+                    : queue.length > 0
+                    ? `${completedUploads.length} of ${queue.length} completed`
+                    : 'No active uploads. Select video files to start.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Batch Action Buttons */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeUploads.length > 0 ? (
+                <button
+                  onClick={pauseAll}
+                  className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Pause className="w-3.5 h-3.5" />
+                  <span>Pause All</span>
+                </button>
+              ) : (
+                <button
+                  onClick={resumeAll}
+                  className="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-medium text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Resume All</span>
+                </button>
+              )}
+
+              {failedUploads.length > 0 && (
+                <button
+                  onClick={resumeAll}
+                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-medium text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Retry All Failed ({failedUploads.length})</span>
+                </button>
+              )}
+
+              {completedUploads.length > 0 && (
+                <button
+                  onClick={clearCompleted}
+                  className="px-3.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/15 text-gray-300 font-medium text-xs transition-all cursor-pointer"
+                >
+                  Clear Finished
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  resetForm();
+                  setActiveTab('add');
+                }}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-red-600/20 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add More Videos</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Search & Filters */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search uploads by filename or title..."
+                value={uploadSearchQuery}
+                onChange={(e) => setUploadSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-xl bg-[#12131a] border border-white/10 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500"
+              />
+            </div>
+
+            <div className="flex items-center gap-1 bg-[#12131a] border border-white/10 rounded-xl p-1 text-xs">
+              {(['all', 'uploading', 'queued', 'completed', 'failed'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setUploadStatusFilter(filter)}
+                  className={`px-3 py-1.5 rounded-lg font-medium capitalize transition-all cursor-pointer ${
+                    uploadStatusFilter === filter
+                      ? 'bg-red-600 text-white font-bold'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Queue Items List */}
+          {filteredQueue.length === 0 ? (
+            <div className="bg-[#12131a] border border-white/10 rounded-2xl p-12 text-center">
+              <FileVideo className="w-12 h-12 text-gray-500 mx-auto mb-3" />
+              <h4 className="text-base font-bold text-white mb-1">Upload Queue Empty</h4>
+              <p className="text-xs text-gray-400 max-w-sm mx-auto mb-4">
+                Select one or multiple large movie files in the Add Movie tab to start high-speed, resumable chunked uploading.
+              </p>
+              <button
+                onClick={() => {
+                  resetForm();
+                  setActiveTab('add');
+                }}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs shadow-lg shadow-red-600/20 cursor-pointer"
+              >
+                Select Movie Videos
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredQueue.map((item) => {
+                const itemSpeedMb = (item.speedBytesPerSec / (1024 * 1024)).toFixed(1);
+                const uploadedMb = (item.uploadedBytes / (1024 * 1024)).toFixed(1);
+                const totalMb = (item.totalBytes / (1024 * 1024)).toFixed(1);
+
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-[#12131a] border border-white/10 rounded-2xl p-4 shadow-xl hover:border-white/20 transition-all"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      {/* Left: Thumbnail & Filename */}
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-16 h-16 sm:w-20 sm:h-14 rounded-xl bg-black/60 border border-white/10 overflow-hidden flex-shrink-0 flex items-center justify-center relative">
+                          {item.thumbnailUrl ? (
+                            <img
+                              src={item.thumbnailUrl}
+                              alt={item.fileName}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <FileVideo className="w-6 h-6 text-red-500" />
+                          )}
+                          {item.status === 'uploading' && (
+                            <div className="absolute inset-0 bg-red-600/20 flex items-center justify-center">
+                              <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-bold text-white truncate">
+                              {item.movieMetadata?.title || item.fileName}
+                            </h4>
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                                item.status === 'uploading'
+                                  ? 'bg-red-600/20 text-red-400 border border-red-500/30'
+                                  : item.status === 'completed'
+                                  ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'
+                                  : item.status === 'processing'
+                                  ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30'
+                                  : item.status === 'failed'
+                                  ? 'bg-rose-600/20 text-rose-400 border border-rose-500/30'
+                                  : item.status === 'paused'
+                                  ? 'bg-amber-600/20 text-amber-400 border border-amber-500/30'
+                                  : 'bg-white/10 text-gray-300'
+                              }`}
+                            >
+                              {item.status}
+                            </span>
+                          </div>
+
+                          <p className="text-[11px] text-gray-400 truncate mt-0.5">
+                            {item.fileName} · {totalMb} MB
+                            {item.audioTracks && item.audioTracks.length > 0 && (
+                              <span className="text-emerald-400 ml-2">
+                                · {item.audioTracks.map((t) => t.language).join(', ')}
+                              </span>
+                            )}
+                          </p>
+
+                          {/* Error Message if any */}
+                          {item.errorMessage && (
+                            <p className="text-[11px] text-rose-400 mt-1 flex items-center gap-1">
+                              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                              <span className="truncate">{item.errorMessage}</span>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right: Actions */}
+                      <div className="flex items-center gap-2 justify-end">
+                        {item.status === 'uploading' && (
+                          <button
+                            onClick={() => pauseUpload(item.id)}
+                            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                            title="Pause upload"
+                          >
+                            <Pause className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        {(item.status === 'paused' || item.status === 'failed') && (
+                          <button
+                            onClick={() => resumeUpload(item.id)}
+                            className="p-2 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer"
+                            title="Resume upload"
+                          >
+                            <Play className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        {item.status === 'failed' && (
+                          <button
+                            onClick={() => retryUpload(item.id)}
+                            className="p-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white transition-colors cursor-pointer"
+                            title="Retry upload"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => removeItem(item.id)}
+                          className="p-2 rounded-xl bg-white/[0.05] hover:bg-rose-950/60 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer"
+                          title="Remove from queue"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar & Real Byte Stats */}
+                    <div className="mt-3">
+                      <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-300 ${
+                            item.status === 'completed'
+                              ? 'bg-emerald-500'
+                              : item.status === 'failed'
+                              ? 'bg-rose-500'
+                              : item.status === 'paused'
+                              ? 'bg-amber-500'
+                              : 'bg-red-600'
+                          }`}
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-gray-400 font-mono mt-1.5">
+                        <span>
+                          {uploadedMb} MB / {totalMb} MB ({item.progress}%)
+                        </span>
+                        {item.status === 'uploading' ? (
+                          <span className="text-red-400 font-medium">{itemSpeedMb} MB/s</span>
+                        ) : (
+                          <span>{item.status === 'completed' ? 'Ready to stream' : item.status}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 2: MOVIE CATALOG MANAGEMENT */}
       {activeTab === 'movies' && (
-        <div className="space-y-4">
-          <div className="p-4 rounded-2xl bg-[#121218] border border-white/[0.08] flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-300">
-              Total Movies: <span className="text-white font-bold">{movies.length}</span>
-            </span>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <h3 className="text-base font-bold text-white">
+              Published Movies ({movies.length})
+            </h3>
             <button
               onClick={() => {
                 resetForm();
                 setActiveTab('add');
               }}
-              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-600/20"
             >
               <Plus className="w-4 h-4" />
-              <span>Add New Movie</span>
+              <span>Add Movie</span>
             </button>
           </div>
 
-          <div className="space-y-3">
-            {movies.map((movie) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {movies.map((m) => (
               <div
-                key={movie.id}
-                className="p-4 rounded-2xl bg-[#121218] border border-white/[0.08] hover:border-white/20 transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                key={m.id}
+                className="bg-[#12131a] border border-white/10 rounded-2xl p-4 flex gap-3 shadow-lg hover:border-white/20 transition-all"
               >
-                {/* Left: Thumbnail & Details */}
-                <div className="flex items-center gap-3.5 min-w-0 flex-1">
-                  <div className="w-16 sm:w-20 aspect-[2/3] rounded-lg overflow-hidden bg-neutral-900 flex-shrink-0 border border-white/10">
-                    <img
-                      src={movie.posterUrl}
-                      alt={movie.title}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
+                <img
+                  src={m.posterUrl}
+                  alt={m.title}
+                  className="w-20 h-28 object-cover rounded-xl flex-shrink-0 bg-neutral-900 border border-white/10"
+                />
 
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm sm:text-base font-bold text-white truncate">
-                        {movie.title}
-                      </h3>
-                      {movie.isPremium && (
-                        <span className="text-[9px] font-extrabold bg-red-600 text-white px-1.5 py-0.5 rounded">
-                          VIP
+                <div className="min-w-0 flex-1 flex flex-col justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold text-white truncate">{m.title}</h4>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      {m.year} · {m.language} · {m.duration}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-red-600/20 text-red-400 border border-red-500/30">
+                        ★ {m.rating}
+                      </span>
+                      {m.isPublished ? (
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-600/20 text-emerald-400">
+                          Published
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-neutral-800 text-gray-400">
+                          Draft
                         </span>
                       )}
-                      {movie.isTrending && (
-                        <span className="text-[9px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded">
-                          Trending
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 text-xs text-gray-400 mt-1">
-                      <span>{movie.year}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{movie.language}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{movie.duration}</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="text-amber-400 font-semibold">★ {movie.rating}</span>
-                    </div>
-
-                    <div className="text-[11px] text-gray-500 truncate mt-1">
-                      Genres: {movie.genre.join(', ')} · Dir: {movie.director}
                     </div>
                   </div>
-                </div>
 
-                {/* Right: Actions */}
-                <div className="flex items-center gap-2 self-end sm:self-center flex-shrink-0">
-                  {/* Test play in Video Player */}
-                  <button
-                    onClick={() => navigate({ path: '/player/:id', id: movie.id })}
-                    title="Test Watch in Player"
-                    className="min-h-[36px] px-3 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-white" />
-                    <span>Watch</span>
-                  </button>
+                  <div className="flex items-center gap-2 mt-3 pt-2 border-t border-white/[0.08]">
+                    <button
+                      onClick={() => navigate({ path: '/player/:id', id: m.id })}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                      title="Play movie"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    </button>
 
-                  {/* Publish/Unpublish toggle */}
-                  <button
-                    onClick={() => togglePublish(movie.id)}
-                    title={movie.isPublished ? 'Unpublish' : 'Publish'}
-                    className={`min-h-[36px] px-3 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                      movie.isPublished
-                        ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-900/40'
-                        : 'bg-neutral-800 text-gray-400 border border-white/10 hover:text-white'
-                    }`}
-                  >
-                    {movie.isPublished ? (
-                      <>
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Published</span>
-                      </>
-                    ) : (
-                      <>
-                        <EyeOff className="w-3.5 h-3.5" />
-                        <span>Draft</span>
-                      </>
-                    )}
-                  </button>
+                    <button
+                      onClick={() => handleEditClick(m)}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                      title="Edit metadata"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
 
-                  {/* Edit */}
-                  <button
-                    onClick={() => handleEditClick(movie)}
-                    title="Edit Movie"
-                    className="min-h-[36px] min-w-[36px] rounded-xl bg-white/5 hover:bg-white/15 text-gray-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
+                    <button
+                      onClick={() => togglePublish(m.id)}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-colors cursor-pointer"
+                      title={m.isPublished ? 'Unpublish' : 'Publish'}
+                    >
+                      {m.isPublished ? (
+                        <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                      )}
+                    </button>
 
-                  {/* Delete */}
-                  <button
-                    onClick={() => {
-                      if (confirm(`Delete "${movie.title}"?`)) {
-                        deleteMovie(movie.id);
-                      }
-                    }}
-                    title="Delete Movie"
-                    className="min-h-[36px] min-w-[36px] rounded-xl bg-red-950/20 hover:bg-red-900/40 text-red-400 hover:text-red-300 flex items-center justify-center transition-colors cursor-pointer border border-red-500/20"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                    <button
+                      onClick={() => deleteMovie(m.id)}
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-rose-950/50 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer ml-auto"
+                      title="Delete movie"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -525,555 +940,443 @@ export const AdminPage: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 2: ADD / EDIT MOVIE FORM WITH REAL VIDEO UPLOAD */}
+      {/* TAB 3: ADD / EDIT MOVIE & BATCH UPLOAD */}
       {activeTab === 'add' && (
-        <form onSubmit={handleSubmitMovie} className="space-y-6">
-          <div className="p-5 sm:p-6 rounded-2xl bg-[#121218] border border-white/[0.08] shadow-xl space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-white/10">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <span>{editingMovieId ? 'Edit Movie Details' : 'Add New Movie to Z1'}</span>
-              </h2>
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+          <div className="bg-[#12131a] border border-white/10 rounded-2xl p-6 sm:p-8 shadow-2xl">
+            <div className="flex items-center justify-between mb-6 pb-4 border-b border-white/10">
+              <div>
+                <h3 className="text-lg font-bold text-white">
+                  {editingMovieId ? `Edit Movie: ${title}` : 'Upload & Add Movie'}
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Select multiple video files for automatic background queueing or enter direct URLs.
+                </p>
+              </div>
+
               {editingMovieId && (
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="text-xs text-red-400 hover:text-red-300 cursor-pointer"
+                  className="px-3 py-1.5 rounded-xl bg-white/10 text-xs font-semibold hover:bg-white/20 transition-all cursor-pointer"
                 >
                   Cancel Edit
                 </button>
               )}
             </div>
 
-            {/* REAL VIDEO UPLOAD SECTION FROM PHONE/DEVICE */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-[#0e0e14] border border-red-500/30 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Upload className="w-4 h-4 text-red-500" />
-                    <span>Video File Upload (Mobile & Cloud Storage)</span>
-                  </h3>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Select a real video file from your phone storage (.mp4, .webm, .mov)
-                  </p>
+            <form onSubmit={handleSubmitMovie} className="space-y-6">
+              {/* SECTION: VIDEO FILE SELECTION (MULTIPLE) */}
+              <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-bold text-white flex items-center gap-2">
+                      <FileVideo className="w-4 h-4 text-red-500" />
+                      <span>Select Video File(s)</span>
+                    </label>
+                    <span className="text-[11px] text-gray-400">
+                      You can select MULTIPLE video files at once. Uploads run in the background.
+                    </span>
+                  </div>
+
+                  <input
+                    ref={videoInputRef}
+                    type="file"
+                    multiple
+                    accept="video/*"
+                    onChange={handleMultipleVideoSelect}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => videoInputRef.current?.click()}
+                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-red-600/20 cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Choose Videos</span>
+                  </button>
                 </div>
-                {videoUploadStatus === 'success' && (
-                  <span className="flex items-center gap-1 text-xs font-semibold text-emerald-400">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Uploaded
-                  </span>
-                )}
-              </div>
 
-              {/* Hidden Native File Input */}
-              <input
-                ref={videoInputRef}
-                type="file"
-                accept="video/mp4,video/webm,video/quicktime,video/*"
-                onChange={handleVideoFileSelect}
-                className="hidden"
-              />
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => videoInputRef.current?.click()}
-                  className="min-h-[44px] px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-white/15"
-                >
-                  <Upload className="w-4 h-4 text-red-400" />
-                  <span>{videoFile ? 'Change Selected Video' : 'Select Video from Phone'}</span>
-                </button>
-
-                {videoFile && (
-                  <div className="flex-1 flex items-center justify-between p-2.5 rounded-xl bg-black/40 border border-white/10 text-xs">
-                    <div className="min-w-0 pr-2">
-                      <p className="font-semibold text-white truncate">{videoFile.name}</p>
-                      <p className="text-[11px] text-gray-400">
-                        {(videoFile.size / (1024 * 1024)).toFixed(2)} MB
-                      </p>
-                    </div>
-
-                    {videoUploadStatus !== 'uploading' && videoUploadStatus !== 'success' && (
+                {selectedVideoFiles.length > 0 && (
+                  <div className="p-3 rounded-xl bg-red-950/20 border border-red-500/30 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-red-400">
+                        {selectedVideoFiles.length} file{selectedVideoFiles.length > 1 ? 's' : ''} ready to upload:
+                      </span>
                       <button
                         type="button"
-                        onClick={handleStartVideoUpload}
-                        className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs whitespace-nowrap cursor-pointer transition-colors"
+                        onClick={handleStartBatchUpload}
+                        className="px-3 py-1 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-500 cursor-pointer"
                       >
-                        Start Upload
+                        Start Upload Queue Now
                       </button>
-                    )}
+                    </div>
+
+                    <div className="max-h-32 overflow-y-auto space-y-1">
+                      {selectedVideoFiles.map((file, idx) => (
+                        <div key={idx} className="text-[11px] text-gray-300 flex items-center justify-between bg-black/40 px-2.5 py-1 rounded">
+                          <span className="truncate">{file.name}</span>
+                          <span className="text-gray-500 font-mono ml-2">
+                            {(file.size / (1024 * 1024)).toFixed(1)} MB
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-400">
+                    Or Direct Streaming URL
+                  </label>
+                  <input
+                    type="text"
+                    value={videoUrl}
+                    onChange={(e) => setVideoUrl(e.target.value)}
+                    placeholder="https://commondatastorage.googleapis.com/.../video.mp4"
+                    className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-red-500"
+                  />
+                </div>
               </div>
 
-              {/* Upload Progress Bar */}
-              {videoUploadStatus === 'uploading' && (
-                <div className="space-y-1.5 pt-2">
-                  <div className="flex items-center justify-between text-xs text-gray-300">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                      Uploading chunked binary stream to storage...
-                    </span>
-                    <span className="font-mono font-bold text-red-400">
-                      {videoUploadProgress}% ({((videoUploadedBytes / (1024 * 1024)) || 0).toFixed(1)} / {((videoTotalBytes / (1024 * 1024)) || 0).toFixed(1)} MB)
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-red-600 to-amber-500 transition-all duration-150"
-                      style={{ width: `${videoUploadProgress}%` }}
-                    />
-                  </div>
+              {/* SECTION: MOVIE METADATA */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-300">Movie Title *</label>
+                  <input
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Chrono Protocol: Redline"
+                    required
+                    className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-red-500"
+                  />
                 </div>
-              )}
 
-              {/* Upload Success Indicator */}
-              {videoUploadStatus === 'success' && (
-                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-300">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    <span className="truncate">
-                      Permanent Video URL generated and saved into database.
-                    </span>
-                  </div>
-                  <span className="font-mono text-[10px] text-emerald-400 font-bold ml-2">100% READY</span>
+                <div>
+                  <label className="text-xs font-semibold text-gray-300">Release Year</label>
+                  <input
+                    type="number"
+                    value={year}
+                    onChange={(e) => setYear(Number(e.target.value))}
+                    className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
+                  />
                 </div>
-              )}
+              </div>
 
-              {/* Upload Error & Retry */}
-              {videoUploadStatus === 'error' && (
-                <div className="p-3 rounded-xl bg-red-950/40 border border-red-500/30 flex items-center justify-between text-xs text-red-300">
+              <div>
+                <label className="text-xs font-semibold text-gray-300">Overview / Synopsis</label>
+                <textarea
+                  rows={3}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Compelling synopsis of the movie..."
+                  className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-gray-300">Primary Language</label>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
+                  >
+                    <option value="Hindi">Hindi</option>
+                    <option value="English">English</option>
+                    <option value="Tamil">Tamil</option>
+                    <option value="Telugu">Telugu</option>
+                    <option value="Malayalam">Malayalam</option>
+                    <option value="Kannada">Kannada</option>
+                    <option value="Spanish">Spanish</option>
+                    <option value="Korean">Korean</option>
+                    <option value="Japanese">Japanese</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-300">Genres (Comma separated)</label>
+                  <input
+                    type="text"
+                    value={genreInput}
+                    onChange={(e) => setGenreInput(e.target.value)}
+                    placeholder="Action, Sci-Fi, Cyberpunk"
+                    className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-300">Duration</label>
+                  <input
+                    type="text"
+                    value={duration}
+                    onChange={(e) => setDuration(e.target.value)}
+                    placeholder="2h 12m"
+                    className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
+                  />
+                </div>
+              </div>
+
+              {/* SECTION: AUDIO TRACKS & DUBBED LANGUAGES */}
+              <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                    <span>{videoUploadError || 'Upload failed. Network interrupted.'}</span>
+                    <Languages className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-white">Audio Tracks & Dubbed Languages</span>
                   </div>
                   <button
                     type="button"
-                    onClick={handleStartVideoUpload}
-                    className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer"
+                    onClick={handleAddAudioTrack}
+                    className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold text-white flex items-center gap-1 cursor-pointer"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Retry</span>
+                    <Plus className="w-3 h-3" />
+                    <span>Add Language Track</span>
                   </button>
                 </div>
-              )}
 
-              {/* Fallback Direct URL Field */}
-              <div>
-                <label className="text-[11px] text-gray-400 font-medium block mb-1">
-                  Or enter direct permanent Video Stream URL (HTTPS MP4/HLS):
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://.../video.mp4 or idb://video/..."
-                  value={videoUrl}
-                  onChange={(e) => setVideoUrl(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
-                />
-              </div>
-            </div>
-
-            {/* BASIC METADATA GRID */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="sm:col-span-2">
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Movie Title *
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Chrono Protocol: Redline"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Release Year
-                </label>
-                <input
-                  type="number"
-                  value={year}
-                  onChange={(e) => setYear(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
+                <div className="space-y-2">
+                  {audioTracks.map((track, idx) => (
+                    <div
+                      key={track.id}
+                      className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.06]"
+                    >
+                      <input
+                        type="text"
+                        value={track.language}
+                        onChange={(e) => handleUpdateAudioTrack(idx, { language: e.target.value })}
+                        placeholder="Language (e.g. Hindi)"
+                        className="w-28 px-3 py-1.5 rounded-lg bg-black/50 border border-white/10 text-xs text-white"
+                      />
+                      <input
+                        type="text"
+                        value={track.label}
+                        onChange={(e) => handleUpdateAudioTrack(idx, { label: e.target.value })}
+                        placeholder="Label (e.g. Hindi Original 5.1)"
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-black/50 border border-white/10 text-xs text-white"
+                      />
+                      <input
+                        type="text"
+                        value={track.codec || 'AAC'}
+                        onChange={(e) => handleUpdateAudioTrack(idx, { codec: e.target.value })}
+                        placeholder="Codec (AAC/Dolby)"
+                        className="w-24 px-3 py-1.5 rounded-lg bg-black/50 border border-white/10 text-xs text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAudioTrack(idx)}
+                        className="p-2 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Language
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. English, Hindi, Japanese"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
+              {/* POSTER & BACKDROP UPLOAD */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-black/40 border border-white/10">
+                  <label className="text-xs font-semibold text-gray-300 flex items-center justify-between">
+                    <span>Poster Artwork</span>
+                    <input
+                      ref={posterInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePosterSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => posterInputRef.current?.click()}
+                      className="text-xs text-red-400 hover:underline cursor-pointer"
+                    >
+                      {posterUploading ? 'Uploading...' : 'Upload Image'}
+                    </button>
+                  </label>
+                  <input
+                    type="text"
+                    value={posterUrl}
+                    onChange={(e) => setPosterUrl(e.target.value)}
+                    placeholder="https://.../poster.jpg"
+                    className="w-full mt-2 px-3 py-2 rounded-xl bg-black/60 border border-white/10 text-xs text-white"
+                  />
+                  {posterUrl && (
+                    <img
+                      src={posterUrl}
+                      alt="Poster Preview"
+                      className="w-16 h-24 object-cover rounded-lg mt-2 border border-white/10"
+                    />
+                  )}
+                </div>
+
+                <div className="p-4 rounded-xl bg-black/40 border border-white/10">
+                  <label className="text-xs font-semibold text-gray-300 flex items-center justify-between">
+                    <span>Backdrop Banner</span>
+                    <input
+                      ref={backdropInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleBackdropSelect}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => backdropInputRef.current?.click()}
+                      className="text-xs text-red-400 hover:underline cursor-pointer"
+                    >
+                      {backdropUploading ? 'Uploading...' : 'Upload Image'}
+                    </button>
+                  </label>
+                  <input
+                    type="text"
+                    value={backdropUrl}
+                    onChange={(e) => setBackdropUrl(e.target.value)}
+                    placeholder="https://.../backdrop.jpg"
+                    className="w-full mt-2 px-3 py-2 rounded-xl bg-black/60 border border-white/10 text-xs text-white"
+                  />
+                  {backdropUrl && (
+                    <img
+                      src={backdropUrl}
+                      alt="Backdrop Preview"
+                      className="w-32 h-18 object-cover rounded-lg mt-2 border border-white/10"
+                    />
+                  )}
+                </div>
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Genres (comma-separated)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Action, Sci-Fi, Thriller"
-                  value={genreInput}
-                  onChange={(e) => setGenreInput(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Duration
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. 2h 15m"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Rating (0 - 10)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  max="10"
-                  value={rating}
-                  onChange={(e) => setRating(Number(e.target.value))}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Director
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Denis Villeneuve"
-                  value={director}
-                  onChange={(e) => setDirector(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                  Starring Cast (comma-separated)
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Marcus Kane, Elena Vance"
-                  value={castInput}
-                  onChange={(e) => setCastInput(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-                />
-              </div>
-            </div>
-
-            {/* DESCRIPTION */}
-            <div>
-              <label className="text-xs font-semibold text-gray-300 block mb-1.5">
-                Storyline / Description
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Write the theatrical plot overview..."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-sm text-white focus:outline-none focus:border-red-500"
-              />
-            </div>
-
-            {/* ARTWORK UPLOADS (POSTER, BACKDROP, TRAILER) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-              {/* Poster Upload */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-gray-300 block">
-                  Poster Image (2:3 Aspect)
-                </label>
-                <input
-                  ref={posterInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePosterSelect}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => posterInputRef.current?.click()}
-                  className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-xs font-medium text-gray-300 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{posterUploading ? 'Uploading...' : 'Upload Poster'}</span>
-                </button>
-                <input
-                  type="text"
-                  placeholder="Or paste Poster URL"
-                  value={posterUrl}
-                  onChange={(e) => setPosterUrl(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-black border border-white/10 text-xs text-white"
-                />
-              </div>
-
-              {/* Backdrop Upload */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-gray-300 block">
-                  Backdrop Banner (16:9 Aspect)
-                </label>
-                <input
-                  ref={backdropInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleBackdropSelect}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => backdropInputRef.current?.click()}
-                  className="w-full py-2 px-3 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 text-xs font-medium text-gray-300 hover:text-white flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{backdropUploading ? 'Uploading...' : 'Upload Backdrop'}</span>
-                </button>
-                <input
-                  type="text"
-                  placeholder="Or paste Backdrop URL"
-                  value={backdropUrl}
-                  onChange={(e) => setBackdropUrl(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-black border border-white/10 text-xs text-white"
-                />
-              </div>
-
-              {/* Trailer URL */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-gray-300 block">
-                  Trailer Stream URL (MP4)
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://.../trailer.mp4"
-                  value={trailerUrl}
-                  onChange={(e) => setTrailerUrl(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-black border border-white/10 text-xs text-white mt-1"
-                />
-                <span className="text-[10px] text-gray-500 block">
-                  Enables &quot;Watch Trailer&quot; button on movie details page
-                </span>
-              </div>
-            </div>
-
-            {/* CURATION FLAGS (Trending, Featured, New Release, Top 10, Premium, Published) */}
-            <div className="pt-4 border-t border-white/10">
-              <span className="text-xs font-bold text-gray-300 uppercase tracking-wider block mb-3">
-                Curation Flags & Access Tiers
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 cursor-pointer">
+              {/* Toggles */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={isPublished}
                     onChange={(e) => setIsPublished(e.target.checked)}
                     className="accent-red-600 rounded"
                   />
-                  <span className="text-xs font-medium text-white">Published</span>
+                  <span className="text-xs font-semibold text-white">Publish Now</span>
                 </label>
 
-                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 cursor-pointer">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={isTrending}
                     onChange={(e) => setIsTrending(e.target.checked)}
                     className="accent-red-600 rounded"
                   />
-                  <span className="text-xs font-medium text-white">Trending</span>
+                  <span className="text-xs font-semibold text-white">Trending</span>
                 </label>
 
-                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 cursor-pointer">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={isFeatured}
                     onChange={(e) => setIsFeatured(e.target.checked)}
                     className="accent-red-600 rounded"
                   />
-                  <span className="text-xs font-medium text-white">Featured Hero</span>
+                  <span className="text-xs font-semibold text-white">Hero Featured</span>
                 </label>
 
-                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 cursor-pointer">
+                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/10 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={isNewRelease}
                     onChange={(e) => setIsNewRelease(e.target.checked)}
                     className="accent-red-600 rounded"
                   />
-                  <span className="text-xs font-medium text-white">New Release</span>
-                </label>
-
-                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isTop10}
-                    onChange={(e) => setIsTop10(e.target.checked)}
-                    className="accent-red-600 rounded"
-                  />
-                  <span className="text-xs font-medium text-white">Top 10 Today</span>
-                </label>
-
-                <label className="flex items-center gap-2 p-2.5 rounded-xl bg-black/40 border border-white/5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isPremium}
-                    onChange={(e) => setIsPremium(e.target.checked)}
-                    className="accent-red-600 rounded"
-                  />
-                  <span className="text-xs font-medium text-white">VIP Only</span>
+                  <span className="text-xs font-semibold text-white">New Release</span>
                 </label>
               </div>
 
-              {isTop10 && (
-                <div className="mt-3 flex items-center gap-2">
-                  <span className="text-xs text-gray-300">Top 10 Rank Position:</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={top10Rank}
-                    onChange={(e) => setTop10Rank(Number(e.target.value))}
-                    className="w-16 px-2 py-1 rounded-lg bg-black border border-white/10 text-xs text-white"
-                  />
-                </div>
-              )}
-            </div>
+              {/* Submit Buttons */}
+              <div className="flex items-center gap-3 pt-4 border-t border-white/10">
+                <button
+                  type="submit"
+                  className="px-6 py-3 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-sm shadow-xl shadow-red-600/25 transition-all cursor-pointer"
+                >
+                  {selectedVideoFiles.length > 0
+                    ? `Start Background Upload (${selectedVideoFiles.length} videos)`
+                    : editingMovieId
+                    ? 'Save Changes'
+                    : 'Save & Publish Movie'}
+                </button>
 
-            {/* SUBMIT BUTTON */}
-            <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/10">
-              <button
-                type="button"
-                onClick={() => {
-                  resetForm();
-                  setActiveTab('movies');
-                }}
-                className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-gray-300 hover:text-white transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-7 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white font-bold text-xs shadow-lg shadow-red-950/40 transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                <Check className="w-4 h-4" />
-                <span>{editingMovieId ? 'Update Movie' : 'Save & Publish Movie'}</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="px-5 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-sm transition-all cursor-pointer"
+                >
+                  Reset Form
+                </button>
+              </div>
+            </form>
           </div>
-        </form>
+        </div>
       )}
 
-      {/* TAB 3: SUPABASE CLOUD STORAGE CONFIGURATION */}
+      {/* TAB 4: CLOUD STORAGE SETTINGS */}
       {activeTab === 'supabase' && (
-        <div className="max-w-2xl mx-auto space-y-6">
-          <div className="p-5 sm:p-6 rounded-2xl bg-[#121218] border border-white/[0.08] shadow-xl space-y-4">
-            <div className="flex items-center gap-3 pb-3 border-b border-white/10">
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <Database className="w-6 h-6" />
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
+          <div className="bg-[#12131a] border border-white/10 rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
+            <div className="flex items-center gap-3 pb-4 border-b border-white/10">
+              <div className="w-10 h-10 rounded-xl bg-emerald-600/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <Database className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white">
-                  Supabase Storage + Database Integration
-                </h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Permanent cloud object storage and distributed database syncing
+                <h3 className="text-base font-bold text-white">Storage & Backend Configuration</h3>
+                <p className="text-xs text-gray-400">
+                  Configure Cloud storage or utilize high-speed local chunked streaming.
                 </p>
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 text-xs text-gray-300 space-y-1.5">
-              <p className="font-semibold text-white">Active Storage Engine Status:</p>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span>
-                  {supabaseConfig.url && supabaseConfig.anonKey
-                    ? 'Connected to Remote Supabase Cloud Bucket'
-                    : 'Local Persistent IndexedDB Video Vault Active (Permanent on this device)'}
-                </span>
-              </div>
-              <p className="text-[11px] text-gray-400 pt-1">
-                You can optionally link your Supabase project below to push uploaded videos directly
-                to your Supabase Storage bucket.
-              </p>
-            </div>
-
             <form onSubmit={handleSaveSupabaseConfig} className="space-y-4">
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">
-                  Supabase Project URL
-                </label>
+                <label className="text-xs font-semibold text-gray-300">Supabase Project URL</label>
                 <input
                   type="text"
-                  placeholder="https://your-project.supabase.co"
                   value={supabaseConfig.url}
-                  onChange={(e) =>
-                    setSupabaseState({ ...supabaseConfig, url: e.target.value.trim() })
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-xs text-white focus:outline-none focus:border-red-500"
+                  onChange={(e) => setSupabaseState({ ...supabaseConfig, url: e.target.value })}
+                  placeholder="https://xyz.supabase.co"
+                  className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">
-                  Supabase Anon Public API Key
-                </label>
+                <label className="text-xs font-semibold text-gray-300">Supabase Anon Key</label>
                 <input
                   type="password"
-                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                   value={supabaseConfig.anonKey}
-                  onChange={(e) =>
-                    setSupabaseState({ ...supabaseConfig, anonKey: e.target.value.trim() })
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-xs text-white focus:outline-none focus:border-red-500"
+                  onChange={(e) => setSupabaseState({ ...supabaseConfig, anonKey: e.target.value })}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+                  className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500 font-mono"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-300 block mb-1">
-                  Storage Bucket Name
-                </label>
+                <label className="text-xs font-semibold text-gray-300">Storage Bucket Name</label>
                 <input
                   type="text"
-                  placeholder="movies"
                   value={supabaseConfig.bucket}
-                  onChange={(e) =>
-                    setSupabaseState({ ...supabaseConfig, bucket: e.target.value.trim() })
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-black border border-white/15 text-xs text-white focus:outline-none focus:border-red-500"
+                  onChange={(e) => setSupabaseState({ ...supabaseConfig, bucket: e.target.value })}
+                  placeholder="movies"
+                  className="w-full mt-1 px-4 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white focus:outline-none focus:border-red-500"
                 />
               </div>
 
               {supabaseSavedNotice && (
-                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
+                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                   <span>Configuration saved successfully.</span>
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-2">
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-colors cursor-pointer"
-                >
-                  Save Supabase Settings
-                </button>
-              </div>
+              <button
+                type="submit"
+                className="px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg transition-all cursor-pointer"
+              >
+                Save Cloud Configuration
+              </button>
             </form>
           </div>
         </div>

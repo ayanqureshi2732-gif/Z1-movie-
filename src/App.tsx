@@ -12,6 +12,7 @@ import { MyListPage } from './pages/MyListPage';
 import { LiveTVPage } from './pages/LiveTVPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { AdminPage } from './pages/AdminPage';
+import { UploadProgressBanner } from './components/UploadProgressBanner';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
@@ -100,6 +101,9 @@ const AppContent: React.FC = () => {
 
       {/* Mobile Bottom Navigation Bar (Hidden on Player) */}
       <BottomNav />
+
+      {/* Persistent Background Upload Progress Banner */}
+      <UploadProgressBanner />
 
       {/* Toast Notification Container */}
       {toasts.length > 0 && (
