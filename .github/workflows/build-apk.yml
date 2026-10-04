@@ -43,10 +43,30 @@ jobs:
         run: npm run build
 
       - name: Sync Capacitor Android
-        run: npx cap sync android
+        run: |
+          if [ ! -f "android/gradlew" ]; then
+            echo "android/gradlew not found. Initializing Capacitor Android platform..."
+            if [ -d "android/app/src" ]; then
+              mkdir -p /tmp/cap_backup
+              cp -r android/app/src /tmp/cap_backup/ 2>/dev/null || true
+              rm -rf android
+              npx cap add android
+              cp -r /tmp/cap_backup/src/* android/app/src/ 2>/dev/null || true
+              rm -rf /tmp/cap_backup
+            else
+              rm -rf android
+              npx cap add android
+            fi
+            sed -i 's/compileSdkVersion = 36/compileSdkVersion = 35/g' android/variables.gradle 2>/dev/null || true
+            sed -i 's/targetSdkVersion = 36/targetSdkVersion = 35/g' android/variables.gradle 2>/dev/null || true
+          fi
+          npx cap sync android
 
       - name: Grant execute permission for gradlew
-        run: chmod +x android/gradlew
+        run: |
+          test -f android/gradlew
+          chmod +x android/gradlew
+          ls -l android/gradlew
 
       - name: Build Debug APK
         run: |
