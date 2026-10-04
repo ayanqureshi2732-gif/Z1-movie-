@@ -33,6 +33,7 @@ jobs:
         run: |
           sdkmanager "platform-tools"
           sdkmanager "platforms;android-35"
+          sdkmanager "platforms;android-36" || true
           sdkmanager "build-tools;35.0.0"
           yes | sdkmanager --licenses
 
@@ -57,8 +58,6 @@ jobs:
               rm -rf android
               npx cap add android
             fi
-            sed -i 's/compileSdkVersion = 36/compileSdkVersion = 35/g' android/variables.gradle 2>/dev/null || true
-            sed -i 's/targetSdkVersion = 36/targetSdkVersion = 35/g' android/variables.gradle 2>/dev/null || true
           fi
           npx cap sync android
 
@@ -68,10 +67,19 @@ jobs:
           chmod +x android/gradlew
           ls -l android/gradlew
 
+      - name: Show Android Build Configuration
+        run: |
+          java -version
+          node --version
+          npm --version
+          cd android
+          ./gradlew --version
+          ./gradlew tasks --stacktrace
+
       - name: Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew clean assembleDebug --stacktrace
 
       - name: Verify Generated APK
         run: |
